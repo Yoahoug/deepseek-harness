@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "generatedAt": "2026-08-16T14:42:26.697Z",
+  "sourceCommit": "47f943859bef60e4160492346772ded9b24f765a",
+  "sourceVersion": "0.1.0-rc.5",
+  "bundleHash": "58ba883905c1b4b1ca77ca320059e40bce6062b7ab4cd5ca6d3c2bd899169711",
+  "artifact": {
+    "url": "https://github.com/Yoahoug/deepseek-harness/releases/download/runtime-47f943859bef/dsh-runtime-47f943859bef.tar.gz",
+    "size": 14056723,
+    "sha256": "13ca1fc48d941edca20807d429fadc627eefbd6af2dc5c0dcc94fdb9d5df10e4"
+  },
+  "signature": "fc6feb6acb5d164d605f52b2e458d010151c6c24e295c29fe951f3f79b28608280b16ecf73c5d9317e3a56d362c68de985ebcc05419f0090c0c57f143635c903"
+}

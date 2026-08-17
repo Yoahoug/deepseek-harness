@@ -67,6 +67,11 @@ jobs:
           elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then already=true
           else already=false
           fi
+          if [ "$FORCE_BUILD" = "true" ] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A forced rebuild must never overwrite a published runtime. Use a
+            # unique release tag while keeping the upstream commit identity.
+            tag="${tag}-r${GITHUB_RUN_NUMBER}"
+          fi
           {
             echo "sha=$sha"
             echo "short=$short"

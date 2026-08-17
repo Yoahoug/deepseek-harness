@@ -138,14 +138,13 @@ jobs:
           node "$GITHUB_WORKSPACE/scripts/create-runtime-index.mjs" \
             "${{ steps.upstream.outputs.sha }}" "$source_version" "$bundle_hash" "$url" "$size" "$sha256" \
             "$RUNNER_TEMP/runtime-index.json"
-          git tag "${{ steps.upstream.outputs.tag }}" "${{ steps.upstream.outputs.sha }}"
-          git push origin "${{ steps.upstream.outputs.tag }}"
+          git fetch origin master
+          release_target="$(git rev-parse origin/master)"
           gh release create "${{ steps.upstream.outputs.tag }}" "$RUNNER_TEMP/$asset" \
             --repo "$GITHUB_REPOSITORY" \
-            --target "${{ steps.upstream.outputs.sha }}" \
+            --target "$release_target" \
             --title "DSH runtime $source_version (${{ steps.upstream.outputs.short }})" \
             --notes "Built from deepseek-harness ${{ steps.upstream.outputs.sha }}."
-          git fetch origin master
           git checkout -B master origin/master
           cp "$RUNNER_TEMP/runtime-index.json" runtime-index.json
           git config user.name github-actions[bot]

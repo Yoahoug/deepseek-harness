@@ -63,6 +63,18 @@ function copyPackage(sourceRoot, rel, outputRoot) {
     const candidate = join(source, name)
     if (existsSync(candidate)) copyTree(candidate, join(target, name), { excludeMaps: name === 'dist' })
   }
+  // Workspace packages can publish production files beside lib/, for example
+  // the Cordis patch that declares a profile bundle. Keep exact entries from
+  // the package's `files` allowlist; do not copy sources, tests, or docs.
+  for (const file of Array.isArray(manifest.files) ? manifest.files : []) {
+    if (typeof file !== 'string' || file.startsWith('!') || file.includes('*') || file.includes('..')) continue
+    const candidate = join(source, file)
+    if (existsSync(candidate) && statSync(candidate).isFile()) copyFile(candidate, join(target, file))
+  }
+  // Older package manifests did not consistently declare this field, but DSH
+  // loads it through the package export during every profile boot.
+  const patch = join(source, 'cordis.patch.yml')
+  if (existsSync(patch)) copyFile(patch, join(target, 'cordis.patch.yml'))
   const bins = typeof manifest.bin === 'string' ? [manifest.bin] : Object.values(manifest.bin || {})
   for (const bin of bins) {
     if (typeof bin !== 'string' || bin.startsWith('/') || bin.includes('..')) continue

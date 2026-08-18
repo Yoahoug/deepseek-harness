@@ -1,0 +1,173 @@
+name: Build DSH runtime
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Official deepseek-harness ref or commit
+        required: false
+        default: master
+      force:
+        description: Build even if this upstream commit already has a release
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    env:
+      UPSTREAM_REPOSITORY: deepseek-ai/deepseek-harness
+      LAUNCHER_REPOSITORY: Yoahoug/dsh-launcher
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout fork workflow
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node and pnpm cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        shell: bash
+        run: corepack enable && pnpm --version
+
+      - name: Restore pnpm store cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/pnpm/store
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Resolve upstream commit
+        id: upstream
+        shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref || 'master' }}
+          FORCE_BUILD: ${{ inputs.force || 'false' }}
+        run: |
+          set -euo pipefail
+          sha="$(git ls-remote "https://github.com/${UPSTREAM_REPOSITORY}.git" "refs/heads/${SOURCE_REF}" | awk 'NR==1 {print $1}')"
+          if [ -z "$sha" ]; then
+            sha="$(git ls-remote "https://github.com/${UPSTREAM_REPOSITORY}.git" "$SOURCE_REF" | awk 'NR==1 {print $1}')"
+          fi
+          test -n "$sha"
+          short="${sha:0:12}"
+          tag="runtime-${short}"
+          if [ "$FORCE_BUILD" = "true" ]; then already=false
+          elif gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then already=true
+          else already=false
+          fi
+          if [ "$FORCE_BUILD" = "true" ] && gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # A forced rebuild must never overwrite a published runtime. Use a
+            # unique release tag while keeping the upstream commit identity.
+            tag="${tag}-r${GITHUB_RUN_NUMBER}"
+          fi
+          {
+            echo "sha=$sha"
+            echo "short=$short"
+            echo "tag=$tag"
+            echo "already=$already"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Stop when upstream is unchanged
+        if: steps.upstream.outputs.already == 'true'
+        run: echo "Runtime for ${{ steps.upstream.outputs.sha }} already exists"
+
+      - name: Fetch official source snapshot
+        if: steps.upstream.outputs.already != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags https://github.com/${UPSTREAM_REPOSITORY}.git "${{ steps.upstream.outputs.sha }}"
+          rm -rf "$RUNNER_TEMP/dsh-source"
+          mkdir -p "$RUNNER_TEMP/dsh-source"
+          git archive "${{ steps.upstream.outputs.sha }}" | tar -x -C "$RUNNER_TEMP/dsh-source"
+
+      - name: Install production build dependencies
+        if: steps.upstream.outputs.already != 'true'
+        working-directory: ${{ runner.temp }}/dsh-source
+        run: pnpm install --frozen-lockfile
+
+      - name: Build DSH web and CLI
+        if: steps.upstream.outputs.already != 'true'
+        working-directory: ${{ runner.temp }}/dsh-source
+        run: pnpm build
+
+      - name: Generate portable runtime bundle
+        if: steps.upstream.outputs.already != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/dsh-runtime-bundle"
+          node "$GITHUB_WORKSPACE/scripts/bundle-runtime.mjs" \
+            --source "$RUNNER_TEMP/dsh-source" \
+            --output "$RUNNER_TEMP/dsh-runtime-bundle"
+          test -f "$RUNNER_TEMP/dsh-runtime-bundle/bundle-manifest.json"
+          test -f "$RUNNER_TEMP/dsh-runtime-bundle/apps/cli/lib/bin.js"
+          test -f "$RUNNER_TEMP/dsh-runtime-bundle/apps/web/dist/index.html"
+          tar -czf "$RUNNER_TEMP/dsh-runtime.tar.gz" -C "$RUNNER_TEMP/dsh-runtime-bundle" .
+
+      - name: Sign and publish runtime
+        if: steps.upstream.outputs.already != 'true'
+        shell: bash
+        env:
+          DSH_RUNTIME_SIGNING_PRIVATE_KEY: ${{ secrets.DSH_RUNTIME_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$DSH_RUNTIME_SIGNING_PRIVATE_KEY" || {
+            echo 'Missing DSH_RUNTIME_SIGNING_PRIVATE_KEY repository secret'
+            exit 1
+          }
+          bundle_hash="$(node -e "console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).bundleHash)" "$RUNNER_TEMP/dsh-runtime-bundle/bundle-manifest.json")"
+          source_version="$(node -p "require('$RUNNER_TEMP/dsh-source/package.json').version")"
+          sha256="$(sha256sum "$RUNNER_TEMP/dsh-runtime.tar.gz" | awk '{print $1}')"
+          size="$(stat -c '%s' "$RUNNER_TEMP/dsh-runtime.tar.gz")"
+          asset="dsh-runtime-${{ steps.upstream.outputs.short }}.tar.gz"
+          cp "$RUNNER_TEMP/dsh-runtime.tar.gz" "$RUNNER_TEMP/$asset"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.upstream.outputs.tag }}/$asset"
+          node "$GITHUB_WORKSPACE/scripts/create-runtime-index.mjs" \
+            "${{ steps.upstream.outputs.sha }}" "$source_version" "$bundle_hash" "$url" "$size" "$sha256" \
+            "$RUNNER_TEMP/runtime-index.json"
+          git fetch origin master
+          release_target="$(git rev-parse origin/master)"
+          gh release create "${{ steps.upstream.outputs.tag }}" "$RUNNER_TEMP/$asset" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$release_target" \
+            --title "DSH runtime $source_version (${{ steps.upstream.outputs.short }})" \
+            --notes "Built from deepseek-harness ${{ steps.upstream.outputs.sha }}."
+          git checkout -B master origin/master
+          cp "$RUNNER_TEMP/runtime-index.json" runtime-index.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add runtime-index.json
+          git commit -m "chore: publish runtime ${{ steps.upstream.outputs.short }}" || true
+          git push origin HEAD:master
+
+      - name: Notify Launcher repository
+        if: steps.upstream.outputs.already != 'true'
+        shell: bash
+        env:
+          DISPATCH_TOKEN: ${{ secrets.LAUNCHER_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.LAUNCHER_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo 'LAUNCHER_DISPATCH_TOKEN is not configured; Launcher will discover runtime-index.json on next start.'
+            exit 0
+          fi
+          gh api "repos/${LAUNCHER_REPOSITORY}/dispatches" \
+            --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            -f event_type=dsh-runtime-published \
+            -f client_payload[source_commit]="${{ steps.upstream.outputs.sha }}" \
+            -f client_payload[runtime_tag]="${{ steps.upstream.outputs.tag }}"

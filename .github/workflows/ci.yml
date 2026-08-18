@@ -15,21 +15,19 @@ on:
           - larger-runner-benchmark
           - consolidated-runner-benchmark
 
-# Cancel a superseded run on every event EXCEPT push. A push run carries the two
-# self-hosted standby drills, which take longer than the interval between master
-# merges, so cancelling supersedes a drill before it reaches a verdict and the
-# lane yields no readiness evidence. Must be decided here: cancellation applies
-# to the whole superseded run, so a job-level group cannot exempt its job.
-# Negated rather than `== 'pull_request'` so workflow_dispatch keeps cancelling:
-# a re-dispatched runner benchmark holds up to 12 larger runners for 15 minutes
-# and shares this group with the drills on master, so queueing it would delay
-# them. The guarantee is narrow — evaluated against the newly triggered run, so a
-# dispatch on master still cancels a mid-flight drill, and a newer pending push
-# displaces an older one. Bounds and rationale:
+# Cancel superseded runs by default so an unavailable runner or a long-running
+# push cannot block the next master run. The self-hosted standby lane is an
+# explicit opt-in; when it is enabled, preserve every push for its readiness
+# evidence. Must be decided here: cancellation applies to the whole superseded
+# run, so a job-level group cannot exempt its job. Negated rather than
+# `== 'pull_request'` so workflow_dispatch keeps cancelling. The guarantee is
+# narrow — evaluated against the newly triggered run, so a dispatch on master
+# still cancels a mid-flight run, and a newer pending push displaces an older one.
 # .agents/notes/implemented/process/2026-07-26-ci-failover-runbook.md
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'push' }}
+  cancel-in-progress: >-
+    ${{ github.event_name != 'push' || vars.DSH_CI_STANDBY_ENABLED != 'true' }}
 
 permissions:
   contents: read
@@ -43,7 +41,7 @@ env:
 jobs:
 
   # TODO(hosted-serial-ci): Re-enable the three hosted serial reference jobs before release.
-  # The self-hosted standby remains active on every master push.
+  # The self-hosted standby is opt-in through DSH_CI_STANDBY_ENABLED.
 
   # Three enterprise jobs isolate coverage, static analysis, and the
   # build-backed consumer tail. The consumer job owns the only Linux build so

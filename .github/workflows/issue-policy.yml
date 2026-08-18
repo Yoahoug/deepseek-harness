@@ -14,6 +14,8 @@ permissions:
 jobs:
   policy:
     name: Issue policy
+    # Enable only after configuring the repository's Issue/ProjectV2 setup.
+    if: vars.DSH_ISSUE_MANAGEMENT_ENABLED == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted policy

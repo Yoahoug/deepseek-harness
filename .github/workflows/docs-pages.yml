@@ -32,6 +32,7 @@ env:
 
 jobs:
   build:
+    if: vars.DSH_DOCS_PAGES_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -64,6 +65,7 @@ jobs:
           path: website/.dist
 
   deploy:
+    if: vars.DSH_DOCS_PAGES_ENABLED == 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:

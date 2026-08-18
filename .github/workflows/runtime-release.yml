@@ -20,6 +20,10 @@ permissions:
 
 jobs:
   build:
+    # Runtime publication needs a signing key and write access to this fork.
+    # Keep the schedule quiet until those repository resources are configured;
+    # manual dispatch remains available for an explicitly requested release.
+    if: github.event_name == 'workflow_dispatch' || vars.DSH_RUNTIME_RELEASE_ENABLED == 'true'
     runs-on: ubuntu-24.04
     env:
       UPSTREAM_REPOSITORY: deepseek-ai/deepseek-harness
